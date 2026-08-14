@@ -16,16 +16,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 专属标的池 (存储板块规范为 MU + WDC)
+# 专属标的池 (严格包含 SNDK 原生代码与存储龙头)
 BENCHMARKS = ["NQ=F", "QQQ"]
 MAG_7 = ["NVDA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "TSLA"]
-STORAGE = ["MU", "WDC"]
+STORAGE = ["MU", "SNDK", "WDC"]  # 原生 SNDK 独立抓取
 WATCHLIST = BENCHMARKS + MAG_7 + STORAGE
 
 # ==============================================================================
 # 🌐 自动抓取 Invesco 官方 QQQ 每日成分股与权重
 # ==============================================================================
-@st.cache_data(ttl=86400)  # 每天自动刷新一次官方持仓
+@st.cache_data(ttl=86400)
 def fetch_invesco_qqq_holdings():
     url = "https://www.invesco.com/us/financial-products/etfs/holdings/main/holdings-0.csv?audienceType=Investor&action=download&ticker=QQQ"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -39,12 +39,11 @@ def fetch_invesco_qqq_holdings():
                 return valid_tickers[:50]
     except Exception:
         pass
-    # 备用 Top 权重清单
     return [
         "NVDA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "GOOG", "TSLA", "AVGO", "COST",
         "NFLX", "AMD", "QCOM", "ADBE", "LIN", "TXN", "PEP", "AMGN", "ISRG", "INTU",
         "CMCSA", "HON", "BKNG", "AMAT", "VRTX", "LRCX", "ADI", "PANW", "MU", "PLTR",
-        "KLAC", "SNPS", "CDNS", "MDLZ", "CRWD", "MAR", "ORLY", "CTAS", "NXPI", "FTNT"
+        "KLAC", "SNPS", "CDNS", "MDLZ", "CRWD", "MAR", "ORLY", "CTAS", "NXPI", "FTNT", "SNDK"
     ]
 
 TOP_WEIGHTS = fetch_invesco_qqq_holdings()
@@ -83,7 +82,6 @@ target_price_input = None
 target_date_input = None
 
 if query_mode == "📅 指定历史日期":
-    # 默认自动定位到今天（最新交易日）
     target_date_input = st.sidebar.date_input("选择查询交易日", datetime.now().date())
 elif query_mode == "🎯 NQmain 目标点位反查":
     target_price_input = st.sidebar.number_input("输入 NQmain 点位 (如 30000)", min_value=10000, max_value=50000, value=30000, step=100)
@@ -180,8 +178,8 @@ try:
     df_contrib_show['贡献点数'] = df_contrib_show['贡献点数'].apply(lambda x: f"{x:+.1f} 点 🚀")
     st.dataframe(df_contrib_show.reset_index(drop=True), use_container_width=True)
 
-    # 维度二：专属关注池 (Mag 7 + 存储双雄 + Toby 理论)
-    st.subheader("🎯 维度二：专属高低切与 Toby 仓位风控雷达 (Mag 7 + 存储双雄)")
+    # 维度二：专属关注池 (Mag 7 + 存储阵营 + Toby 理论)
+    st.subheader("🎯 维度二：专属高低切与 Toby 仓位风控雷达 (Mag 7 + SNDK + 存储双雄)")
     watch_rows = []
     copy_lines = []
     
