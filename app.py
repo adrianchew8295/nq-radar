@@ -1,12 +1,13 @@
-
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import requests
+import io
 from datetime import datetime, timezone, timedelta
 
 # ==============================================================================
-# 🎨 页面基础配置 (自适应手机与电脑端)
+# 🎨 页面基础配置
 # ==============================================================================
 st.set_page_config(
     page_title="NQmain 跨资产时光机与高低切雷达",
@@ -15,25 +16,44 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 标的池定义
+# 专属标的池 (存储板块规范为 MU + WDC)
 BENCHMARKS = ["NQ=F", "QQQ"]
 MAG_7 = ["NVDA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "TSLA"]
-STORAGE = ["MU", "WDC"]  # SNDK 闪存业务由 WDC (母体业务) 映射代理
+STORAGE = ["MU", "WDC"]
 WATCHLIST = BENCHMARKS + MAG_7 + STORAGE
 
-# QQQ Top 权重池 (用于全市场 100 股拉盘归因)
-TOP_WEIGHTS = [
-    "NVDA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "GOOG", "TSLA", "AVGO", "COST",
-    "NFLX", "AMD", "QCOM", "ADBE", "LIN", "TXN", "PEP", "AMGN", "ISRG", "INTU",
-    "CMCSA", "HON", "BKNG", "AMAT", "VRTX", "LRCX", "ADI", "PANW", "MU", "PLTR",
-    "KLAC", "SNPS", "CDNS", "MDLZ", "CRWD", "MAR", "ORLY", "CTAS", "NXPI", "FTNT"
-]
+# ==============================================================================
+# 🌐 自动抓取 Invesco 官方 QQQ 每日成分股与权重
+# ==============================================================================
+@st.cache_data(ttl=86400)  # 每天自动刷新一次官方持仓
+def fetch_invesco_qqq_holdings():
+    url = "https://www.invesco.com/us/financial-products/etfs/holdings/main/holdings-0.csv?audienceType=Investor&action=download&ticker=QQQ"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            df = pd.read_csv(io.StringIO(res.text))
+            if 'Holding Ticker' in df.columns:
+                tickers = df['Holding Ticker'].dropna().astype(str).str.strip().tolist()
+                valid_tickers = [t for t in tickers if t.isalpha() and len(t) <= 5]
+                return valid_tickers[:50]
+    except Exception:
+        pass
+    # 备用 Top 权重清单
+    return [
+        "NVDA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "GOOG", "TSLA", "AVGO", "COST",
+        "NFLX", "AMD", "QCOM", "ADBE", "LIN", "TXN", "PEP", "AMGN", "ISRG", "INTU",
+        "CMCSA", "HON", "BKNG", "AMAT", "VRTX", "LRCX", "ADI", "PANW", "MU", "PLTR",
+        "KLAC", "SNPS", "CDNS", "MDLZ", "CRWD", "MAR", "ORLY", "CTAS", "NXPI", "FTNT"
+    ]
+
+TOP_WEIGHTS = fetch_invesco_qqq_holdings()
 ALL_TICKERS = list(set(WATCHLIST + TOP_WEIGHTS))
 
 # ==============================================================================
-# 📡 数据拉取与缓存 (加速手机端加载)
+# 📡 数据拉取与缓存
 # ==============================================================================
-@st.cache_data(ttl=1800)  # 缓存 30 分钟
+@st.cache_data(ttl=1800)
 def load_market_data():
     data = yf.download(ALL_TICKERS, period="2y", interval="1d", group_by='ticker', progress=False)
     return data
@@ -42,18 +62,15 @@ def load_market_data():
 # 🛑 铁律门禁：未收盘强制拦截验证
 # ==============================================================================
 def check_market_lockout(target_dt):
-    # 美东时间 ET (UTC-4)
     now_et = datetime.now(timezone.utc) - timedelta(hours=4)
     today_et = now_et.date()
-    
     if target_dt == today_et:
-        # 美股期货与大盘定格时间为美东 16:15
         if now_et.time() < datetime.strptime("16:15", "%H:%M").time():
             return False, now_et.strftime('%H:%M:%S')
     return True, ""
 
 # ==============================================================================
-# 🎛️ 侧边栏控制面板 (时光机交互)
+# 🎛️ 侧边栏控制面板
 # ==============================================================================
 st.sidebar.header("🕹️ 时光机控制面板")
 
@@ -66,7 +83,8 @@ target_price_input = None
 target_date_input = None
 
 if query_mode == "📅 指定历史日期":
-    target_date_input = st.sidebar.date_input("选择查询交易日", datetime(2025, 8, 12))
+    # 默认自动定位到今天（最新交易日）
+    target_date_input = st.sidebar.date_input("选择查询交易日", datetime.now().date())
 elif query_mode == "🎯 NQmain 目标点位反查":
     target_price_input = st.sidebar.number_input("输入 NQmain 点位 (如 30000)", min_value=10000, max_value=50000, value=30000, step=100)
 
@@ -80,7 +98,6 @@ try:
     raw_data = load_market_data()
     nq_df = raw_data['NQ=F'].dropna() if 'NQ=F' in raw_data and len(raw_data['NQ=F'].dropna()) > 0 else raw_data['QQQ'].dropna()
 
-    # 1. 锁定切片交易日
     if query_mode == "🏆 NQmain 历史最高点 (ATH)":
         target_idx = nq_df['High'].idxmax()
     elif query_mode == "🎯 NQmain 目标点位反查":
@@ -93,12 +110,11 @@ try:
     else:
         t_dt = pd.to_datetime(target_date_input)
         valid_dates = nq_df.index[nq_df.index <= t_dt]
-        target_idx = valid_dates[-1] if len(valid_dates) > 0 else nq_df.index[0]
+        target_idx = valid_dates[-1] if len(valid_dates) > 0 else nq_df.index[-1]
 
     target_date_str = target_idx.strftime('%Y-%m-%d')
     target_date_obj = target_idx.date()
 
-    # 2. 执行收盘门禁验证
     is_closed, current_et_time = check_market_lockout(target_date_obj)
     if not is_closed:
         st.error(f"""
@@ -109,7 +125,6 @@ try:
         """)
         st.stop()
 
-    # 3. 计算 NQmain 与 QQQ 宏观水位
     nq_close = nq_df['Close'].loc[target_idx]
     loc_pos_nq = nq_df.index.get_loc(target_idx)
     nq_prev_close = nq_df['Close'].iloc[loc_pos_nq - 1] if loc_pos_nq > 0 else nq_close
@@ -122,13 +137,9 @@ try:
     qqq_prev = qqq_df['Close'].shift(1).loc[target_idx] if target_idx in qqq_df.index else qqq_close
     qqq_chg_pct = ((qqq_close - qqq_prev) / qqq_prev) * 100 if qqq_prev > 0 else 0
 
-    # ==============================================================================
-    # 📱 页面 UI 渲染
-    # ==============================================================================
     st.title("🎯 NQmain 跨资产归因与高低切雷达")
     st.caption(f"📅 锁定定格交易日: **{target_date_str}** | 门禁审计: **DAILY CLOSE 已定格 ✅**")
 
-    # 顶部 KPI 指标卡片
     col1, col2, col3 = st.columns(3)
     col1.metric("🎯 NQmain 期货主力", f"{nq_close:,.2f}", f"{nq_chg_pct:+.2f}%")
     col2.metric("📈 QQQ 纳指基准", f"${qqq_close:.2f}", f"{qqq_chg_pct:+.2f}%")
@@ -136,10 +147,8 @@ try:
 
     st.markdown("---")
 
-    # --------------------------------------------------------------------------
-    # 维度一：今日谁在拉盘？全市场 100 股点数贡献 TOP 5
-    # --------------------------------------------------------------------------
-    st.subheader("🔥 维度一：今日谁在拉盘？(100 股拉盘归因 TOP 5)")
+    # 维度一：今日谁在拉盘 TOP 5
+    st.subheader("🔥 维度一：今日谁在拉盘？(全市场 100 股拉盘归因 TOP 5)")
     contrib_list = []
     for t in TOP_WEIGHTS:
         if t not in raw_data: continue
@@ -165,21 +174,16 @@ try:
         })
 
     df_contrib = pd.DataFrame(contrib_list).sort_values(by="贡献点数", ascending=False).head(5)
-    
-    # 格式化呈现
     df_contrib_show = df_contrib.copy()
     df_contrib_show['当日涨跌%'] = df_contrib_show['当日涨跌%'].apply(lambda x: f"{x:+.2f}%")
     df_contrib_show['成交额($B)'] = df_contrib_show['成交额($B)'].apply(lambda x: f"${x:.2f}B")
     df_contrib_show['贡献点数'] = df_contrib_show['贡献点数'].apply(lambda x: f"{x:+.1f} 点 🚀")
     st.dataframe(df_contrib_show.reset_index(drop=True), use_container_width=True)
 
-    # --------------------------------------------------------------------------
     # 维度二：专属关注池 (Mag 7 + 存储双雄 + Toby 理论)
-    # --------------------------------------------------------------------------
     st.subheader("🎯 维度二：专属高低切与 Toby 仓位风控雷达 (Mag 7 + 存储双雄)")
-    
     watch_rows = []
-    copy_lines = []  # 专门为一键复制准备的纯文本
+    copy_lines = []
     
     for ticker in WATCHLIST:
         if ticker not in raw_data: continue
@@ -200,7 +204,6 @@ try:
         ath_p = df_t['High'].loc[:target_idx].max()
         drawdown = ((c - ath_p) / ath_p) * 100
         
-        # --- Toby Crabel 机械化形态判定 ---
         rng = h - l
         past_ranges = (df_t['High'].iloc[max(0, pos-6):pos+1] - df_t['Low'].iloc[max(0, pos-6):pos+1]).values
         is_nr7 = len(past_ranges) == 7 and rng == np.min(past_ranges)
@@ -229,15 +232,8 @@ try:
             toby_status = "⚪ Normal Range (常态)"
             action_signal = "🟢 常规波动，按既定计划操作"
             
-        display_ticker = "SNDK (WDC代理)" if ticker == "WDC" else ticker
-        
-        # 分组类别
-        if ticker in ["NQ=F", "QQQ"]:
-            cat = "基准"
-        elif ticker in STORAGE:
-            cat = "存储"
-        else:
-            cat = "7巨头"
+        display_ticker = ticker
+        cat = "基准" if ticker in BENCHMARKS else ("存储" if ticker in STORAGE else "7巨头")
             
         watch_rows.append({
             "代码": display_ticker,
@@ -250,12 +246,9 @@ try:
             "操盘风控指令": action_signal
         })
         
-        # 组装用于复制的文本行
         copy_lines.append(f" • {display_ticker:5s}: 收盘 {c:.2f} ({chg_pct:+.2f}%) | 距ATH {drawdown:+.2f}% | {toby_status} -> {action_signal}")
 
     df_watch = pd.DataFrame(watch_rows)
-    
-    # 排序：基准置顶，其余按距高点降序
     bm_part = df_watch[df_watch['板块'] == '基准']
     st_part = df_watch[df_watch['板块'] != '基准'].sort_values(by="距自身ATH%", ascending=False)
     
@@ -267,9 +260,7 @@ try:
     final_table = pd.concat([bm_part, st_part])
     st.dataframe(final_table.reset_index(drop=True), use_container_width=True)
 
-    # --------------------------------------------------------------------------
-    # 📋 维度三：一键复制专属文本框 (1-CLICK COPY FOR GEMINI)
-    # --------------------------------------------------------------------------
+    # 维度三：一键复制专属文本框
     st.markdown("---")
     st.subheader("📋 一键极速复制 (直接点击右上角复制，粘贴发给 Gemini)")
     
@@ -290,7 +281,6 @@ try:
 """ + "\n".join(copy_lines) + """
 ================================================================================
 """
-    # st.code 自带原生一键复制按钮 (手机/电脑均支持 1-Click Copy)
     st.code(copy_text_block, language="text")
 
 except Exception as e:
