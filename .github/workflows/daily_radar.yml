@@ -1,0 +1,38 @@
+name: Daily NQ Radar Auto-Audit
+
+on:
+  schedule:
+    # 每周二至周六 22:00 UTC (即大马时间周二至周六 早上 6:00 AM)
+    - cron: '0 22 * * 1-5'
+  workflow_dispatch: # 支持在 GitHub 网页手动点击一键测试
+
+permissions:
+  contents: write
+
+jobs:
+  run-audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出仓库代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Python 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装运行依赖
+        run: |
+          pip install pandas numpy requests openpyxl yfinance
+
+      - name: 执行每日量价与波动审计
+        run: |
+          python daily_cron_audit.py
+
+      - name: 自动提交并保存 Excel 到仓库
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add NQ_RADAR_Daily_Tracker.xlsx
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore(radar): auto audit update $(date +'%Y-%m-%d')" && git push)
